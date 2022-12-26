@@ -13,6 +13,7 @@ ESP8266WiFiMulti WiFiMulti;
 #include "SPIFFS.h"
 #include "time.h"
 #include <Ticker.h>
+
 #include <HTTPClient.h>
 
 #include "ArduinoOcpp/Core/FileManage.h"
@@ -115,7 +116,7 @@ void setup()
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
   {
-    Serial.println("in main file SPIFFS Mount Failed");
+    Serial.println("SPIFFS Mount Failed");
     return;
   }
 
