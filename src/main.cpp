@@ -395,20 +395,18 @@ void checkServer()
 void checkStatus()
 {
   struct tm timeinfo;
-
+  Serial.println("Fucntion is getting called !");
   if (WiFi.status() == WL_DISCONNECTED)
   {
-    Serial.println("not connected");
+    Serial.println("not connected in the function");
     WiFi.begin(STASSID, STAPSK);
-    if (count == true)
+
     {
       count++;
     }
     if (connected_to_wifi == true && disconnected == false)
     {
       // First time disconnection after connection
-      count = true;
-
       Serial.println("Failed to obtain time, Saving Previous  (means disconnection)");
 
       appendFile(SPIFFS, "/hello.csv", "DISCONNECT,");
@@ -481,13 +479,12 @@ void checkStatus()
 
       appendFile(SPIFFS, "/hello.csv", "200");
       appendFile(SPIFFS, "/hello.csv", "\n");
+
+      readFile(SPIFFS, "/hello.csv");
     }
     connected_to_wifi = true;
     disconnected = false;
-    count = false;
   }
-
-  readFile(SPIFFS, "/hello.csv");
 }
 
 // void testFileIO(fs::FS &fs, const char *path)
