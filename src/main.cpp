@@ -89,7 +89,12 @@ void setup()
    * Initialize Serial and WiFi
    */
 
-  Serial.begin(9600);
+  Serial.begin(115200);
+  if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
+  {
+    Serial.println("SPIFFS Mount Failed");
+    return;
+  }
   Serial.setDebugOutput(true);
 
   Serial.print(F("[main] Wait for WiFi: "));
