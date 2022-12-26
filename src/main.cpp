@@ -52,8 +52,7 @@ int led = BUILTIN_LED; // In case it's on, turn LED off, as sometimes PIN-5 on s
 int led = 2;
 #endif
 
-// #define FORMAT_SPIFFS_IF_FAILED true
-#define FORMAT_SPIFFS_IF_FAILED false
+#define FORMAT_SPIFFS_IF_FAILED true
 
 Ticker periodicTicker;
 Ticker onceTicker;
@@ -85,43 +84,43 @@ void checkStatus();
 
 void setup()
 {
-
-  /*
-   * Initialize Serial and WiFi
-   */
-
   Serial.begin(115200);
+
+  pinMode(led, OUTPUT);
+
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(STASSID);
+
+  WiFi.begin(STASSID, STAPSK);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  connected_to_wifi = true;
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
   if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
   {
-    Serial.println("SPIFFS Mount Failed i dont know why");
+    Serial.println("SPIFFS Mount Failed");
     return;
   }
-  Serial.setDebugOutput(true);
-
-  Serial.print(F("[main] Wait for WiFi: "));
-
-#if defined(ESP8266)
-  WiFiMulti.addAP(STASSID, STAPSK);
-  while (WiFiMulti.run() != WL_CONNECTED)
-  {
-    Serial.print('.');
-    delay(1000);
-  }
-#elif defined(ESP32)
-  WiFi.begin(STASSID, STAPSK);
-  while (!WiFi.isConnected())
-  {
-    Serial.print('.');
-    delay(1000);
-  }
-#else
-#error only ESP32 or ESP8266 supported at the moment
-#endif
-
-  Serial.print(F(" connected!\n"));
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   listDir(SPIFFS, "/", 0);
+
+  periodicTicker.attach_ms(5000, checkStatus);
+
+  writeFile(SPIFFS, "/hello.csv", "TYPE,DAY,MONTH,YEAR,HOURS,MINUTES,SECONDS,CODE\n");
+
+  readFile(SPIFFS, "/hello.csv");
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   /*
    * Initialize the OCPP library
@@ -153,12 +152,6 @@ void setup()
    * Notify the Central System that this station is ready
    */
   bootNotification("My Charging Station", "My company name");
-
-  periodicTicker.attach_ms(5000, checkStatus);
-  deleteFile(SPIFFS, "/hello.csv");
-  writeFile(SPIFFS, "/hello.csv", "TYPE,DAY,MONTH,YEAR,HOURS,MINUTES,SECONDS\n");
-
-  readFile(SPIFFS, "/hello.csv");
 }
 
 void loop()
