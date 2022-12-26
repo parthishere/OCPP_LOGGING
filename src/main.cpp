@@ -52,7 +52,8 @@ int led = BUILTIN_LED; // In case it's on, turn LED off, as sometimes PIN-5 on s
 int led = 2;
 #endif
 
-#define FORMAT_SPIFFS_IF_FAILED true
+// #define FORMAT_SPIFFS_IF_FAILED true
+#define FORMAT_SPIFFS_IF_FAILED false
 
 Ticker periodicTicker;
 Ticker onceTicker;
@@ -92,7 +93,7 @@ void setup()
   Serial.begin(115200);
   if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
   {
-    Serial.println("SPIFFS Mount Failed");
+    Serial.println("SPIFFS Mount Failed i dont know why");
     return;
   }
   Serial.setDebugOutput(true);
@@ -119,11 +120,6 @@ void setup()
 
   Serial.print(F(" connected!\n"));
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
-  {
-    Serial.println("SPIFFS Mount Failed");
-    return;
-  }
 
   listDir(SPIFFS, "/", 0);
 
