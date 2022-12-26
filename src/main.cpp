@@ -14,12 +14,13 @@ ESP8266WiFiMulti WiFiMulti;
 #include "time.h"
 #include <Ticker.h>
 #include <HTTPClient.h>
-#include <FileManage.h>
+
+#include "ArduinoOcpp/Core/FileManage.h"
 #else
 #error only ESP32 or ESP8266 supported at the moment
 #endif
 
-#define STASSID "parthishere-hotspot"
+#define STASSID "ROG-hp"
 #define STAPSK ""
 
 // #define STASSID "ALIENWARE"
@@ -27,8 +28,12 @@ ESP8266WiFiMulti WiFiMulti;
 
 // 159
 #define OCPP_HOST "192.168.1.77"
-#define OCPP_PORT 6630
-#define OCPP_URL "ws://192.168.1.77:6630/ocpp/GP001"
+#define OCPP_PORT 8000
+#define OCPP_URL "ws://192.168.1.77:8000/ws/socket/"
+
+// #define OCPP_HOST "192.168.1.102"
+// #define OCPP_PORT 8000
+// #define OCPP_URL "ws://192.168.1.102:8000/ws/socket/"
 
 //
 ////  Settings which worked for my SteVe instance
@@ -69,6 +74,7 @@ char timeYear[5];
 
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
 void readFile(fs::FS &fs, const char *path);
+void deleteFile(fs::FS &fs, const char *path);
 void writeFile(fs::FS &fs, const char *path, const char *message);
 void appendFile(fs::FS &fs, const char *path, const char *message);
 void checkStatus();
@@ -106,10 +112,10 @@ void setup()
 #endif
 
   Serial.print(F(" connected!\n"));
-
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
   {
-    Serial.println("SPIFFS Mount Failed");
+    Serial.println("in main file SPIFFS Mount Failed");
     return;
   }
 
@@ -147,12 +153,10 @@ void setup()
   bootNotification("My Charging Station", "My company name");
 
   periodicTicker.attach_ms(5000, checkStatus);
-
-  writeFile(SPIFFS, "/hello.csv", "TYPE,DAY,MONTH,YEAR,HOURS,MINUTES,SECONDS");
+  deleteFile(SPIFFS, "/hello.csv");
+  writeFile(SPIFFS, "/hello.csv", "TYPE,DAY,MONTH,YEAR,HOURS,MINUTES,SECONDS\n");
 
   readFile(SPIFFS, "/hello.csv");
-
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
 void loop()
@@ -360,22 +364,11 @@ void checkServer()
   else
   {
     strftime(timeSeconds, 10, "%S", &timeinfo);
-    Serial.println(timeSeconds);
-
     strftime(timeMin, 3, "%M", &timeinfo);
-    Serial.println(timeMin);
-
     strftime(timeHour, 10, "%H", &timeinfo);
-    Serial.println(timeHour);
-
     strftime(timeDay, 10, "%A", &timeinfo);
-    Serial.println(timeDay);
-
     strftime(timeMonth, 10, "%B", &timeinfo);
-    Serial.println(timeMonth);
-
     strftime(timeYear, 5, "%Y", &timeinfo);
-    Serial.println(timeYear);
 
     Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
     appendFile(SPIFFS, "/hello.csv", "SERVER_ERROR,");
@@ -408,11 +401,6 @@ void checkStatus()
 {
   struct tm timeinfo;
 
-  if (!getLocalTime(&timeinfo))
-  {
-    Serial.println("Failed to obtain time");
-  }
-
   if (WiFi.status() == WL_DISCONNECTED)
   {
     Serial.println("not connected");
@@ -426,7 +414,7 @@ void checkStatus()
       // First time disconnection after connection
       count = true;
 
-      Serial.println("Failed to obtain time, Saving Previous Time");
+      Serial.println("Failed to obtain time, Saving Previous  (means disconnection)");
 
       appendFile(SPIFFS, "/hello.csv", "DISCONNECT,");
       appendFile(SPIFFS, "/hello.csv", timeDay);
@@ -445,6 +433,9 @@ void checkStatus()
       appendFile(SPIFFS, "/hello.csv", ",");
 
       appendFile(SPIFFS, "/hello.csv", timeSeconds);
+      appendFile(SPIFFS, "/hello.csv", ",");
+
+      appendFile(SPIFFS, "/hello.csv", "600");
       appendFile(SPIFFS, "/hello.csv", "\n");
     }
     connected_to_wifi = false;
@@ -453,31 +444,27 @@ void checkStatus()
 
   else if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.println("connected");
-
+    if (!getLocalTime(&timeinfo))
+    {
+      Serial.println("Failed to obtain time in check status");
+    }
     strftime(timeSeconds, 10, "%S", &timeinfo);
-    Serial.println(timeSeconds);
 
     strftime(timeMin, 3, "%M", &timeinfo);
-    Serial.println(timeMin);
 
     strftime(timeHour, 10, "%H", &timeinfo);
-    Serial.println(timeHour);
 
     strftime(timeDay, 10, "%A", &timeinfo);
-    Serial.println(timeDay);
 
     strftime(timeMonth, 10, "%B", &timeinfo);
-    Serial.println(timeMonth);
 
     strftime(timeYear, 5, "%Y", &timeinfo);
-    Serial.println(timeYear);
 
     Serial.println();
     if (connected_to_wifi == false && disconnected == true)
     {
       // First time connection after disconnection
-
+      Serial.println("wifi connected after a disconnection");
       appendFile(SPIFFS, "/hello.csv", "CONNECT,");
       appendFile(SPIFFS, "/hello.csv", timeDay);
       appendFile(SPIFFS, "/hello.csv", ",");
@@ -495,6 +482,9 @@ void checkStatus()
       appendFile(SPIFFS, "/hello.csv", ",");
 
       appendFile(SPIFFS, "/hello.csv", timeSeconds);
+      appendFile(SPIFFS, "/hello.csv", ",");
+
+      appendFile(SPIFFS, "/hello.csv", "200");
       appendFile(SPIFFS, "/hello.csv", "\n");
     }
     connected_to_wifi = true;
@@ -505,66 +495,66 @@ void checkStatus()
   readFile(SPIFFS, "/hello.csv");
 }
 
-void testFileIO(fs::FS &fs, const char *path)
-{
-  Serial.printf("Testing file I/O with %s\r\n", path);
+// void testFileIO(fs::FS &fs, const char *path)
+// {
+//   Serial.printf("Testing file I/O with %s\r\n", path);
 
-  static uint8_t buf[512];
-  size_t len = 0;
-  File file = fs.open(path, FILE_WRITE);
-  if (!file)
-  {
-    Serial.println("- failed to open file for writing");
-    return;
-  }
+//   static uint8_t buf[512];
+//   size_t len = 0;
+//   File file = fs.open(path, FILE_WRITE);
+//   if (!file)
+//   {
+//     Serial.println("- failed to open file for writing");
+//     return;
+//   }
 
-  size_t i;
-  Serial.print("- writing");
-  uint32_t start = millis();
-  for (i = 0; i < 2048; i++)
-  {
-    if ((i & 0x001F) == 0x001F)
-    {
-      Serial.print(".");
-    }
-    file.write(buf, 512);
-  }
-  Serial.println("");
-  uint32_t end = millis() - start;
-  Serial.printf(" - %u bytes written in %u ms\r\n", 2048 * 512, end);
-  file.close();
+//   size_t i;
+//   Serial.print("- writing");
+//   uint32_t start = millis();
+//   for (i = 0; i < 2048; i++)
+//   {
+//     if ((i & 0x001F) == 0x001F)
+//     {
+//       Serial.print(".");
+//     }
+//     file.write(buf, 512);
+//   }
+//   Serial.println("");
+//   uint32_t end = millis() - start;
+//   Serial.printf(" - %u bytes written in %u ms\r\n", 2048 * 512, end);
+//   file.close();
 
-  file = fs.open(path);
-  start = millis();
-  end = start;
-  i = 0;
-  if (file && !file.isDirectory())
-  {
-    len = file.size();
-    size_t flen = len;
-    start = millis();
-    Serial.print("- reading");
-    while (len)
-    {
-      size_t toRead = len;
-      if (toRead > 512)
-      {
-        toRead = 512;
-      }
-      file.read(buf, toRead);
-      if ((i++ & 0x001F) == 0x001F)
-      {
-        Serial.print(".");
-      }
-      len -= toRead;
-    }
-    Serial.println("");
-    end = millis() - start;
-    Serial.printf("- %u bytes read in %u ms\r\n", flen, end);
-    file.close();
-  }
-  else
-  {
-    Serial.println("- failed to open file for reading");
-  }
-}
+//   file = fs.open(path);
+//   start = millis();
+//   end = start;
+//   i = 0;
+//   if (file && !file.isDirectory())
+//   {
+//     len = file.size();
+//     size_t flen = len;
+//     start = millis();
+//     Serial.print("- reading");
+//     while (len)
+//     {
+//       size_t toRead = len;
+//       if (toRead > 512)
+//       {
+//         toRead = 512;
+//       }
+//       file.read(buf, toRead);
+//       if ((i++ & 0x001F) == 0x001F)
+//       {
+//         Serial.print(".");
+//       }
+//       len -= toRead;
+//     }
+//     Serial.println("");
+//     end = millis() - start;
+//     Serial.printf("- %u bytes read in %u ms\r\n", flen, end);
+//     file.close();
+//   }
+//   else
+//   {
+//     Serial.println("- failed to open file for reading");
+//   }
+// }
