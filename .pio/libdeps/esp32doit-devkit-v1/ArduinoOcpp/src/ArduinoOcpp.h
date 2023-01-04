@@ -15,35 +15,39 @@
 #include <ArduinoOcpp/Core/OcppOperationTimeout.h>
 #include <ArduinoOcpp/Core/OcppSocket.h>
 
+using ArduinoOcpp::OnAbortListener;
 using ArduinoOcpp::OnReceiveConfListener;
+using ArduinoOcpp::OnReceiveErrorListener;
 using ArduinoOcpp::OnReceiveReqListener;
 using ArduinoOcpp::OnSendConfListener;
-using ArduinoOcpp::OnAbortListener;
 using ArduinoOcpp::OnTimeoutListener;
-using ArduinoOcpp::OnReceiveErrorListener;
 
 using ArduinoOcpp::Timeout;
 
 #ifndef AO_CUSTOM_WS
-//uses links2004/WebSockets library
+// uses links2004/WebSockets library
 void OCPP_initialize(const char *CS_hostname, uint16_t CS_port, const char *CS_url, float V_eff = 230.f /*German grid*/, ArduinoOcpp::FilesystemOpt fsOpt = ArduinoOcpp::FilesystemOpt::Use_Mount_FormatOnFail, ArduinoOcpp::OcppClock system_time = ArduinoOcpp::Clocks::DEFAULT_CLOCK);
 #endif
 
-//Lets you use your own WebSocket implementation
-void OCPP_initialize(ArduinoOcpp::OcppSocket& ocppSocket, float V_eff = 230.f /*German grid*/, ArduinoOcpp::FilesystemOpt fsOpt = ArduinoOcpp::FilesystemOpt::Use_Mount_FormatOnFail, ArduinoOcpp::OcppClock system_time = ArduinoOcpp::Clocks::DEFAULT_CLOCK);
+#define EV_Plug_Pin 36 // Input pin | Read if an EV is connected to the EVSE
+#define EV_Plugged HIGH
+#define EV_Unplugged LOW
 
-//experimental; More testing required (help needed: it would be awesome if you can you publish your evaluation results on the GitHub page)
+// Lets you use your own WebSocket implementation
+void OCPP_initialize(ArduinoOcpp::OcppSocket &ocppSocket, float V_eff = 230.f /*German grid*/, ArduinoOcpp::FilesystemOpt fsOpt = ArduinoOcpp::FilesystemOpt::Use_Mount_FormatOnFail, ArduinoOcpp::OcppClock system_time = ArduinoOcpp::Clocks::DEFAULT_CLOCK);
+
+// experimental; More testing required (help needed: it would be awesome if you can you publish your evaluation results on the GitHub page)
 void OCPP_deinitialize();
 
 void OCPP_loop();
 
 /*
  * Provide hardware-related information to the library
- * 
+ *
  * The library needs a way to obtain information from your charger that changes over time. The
  * library calls following callbacks regularily (if they were set) to refresh its internal
  * status.
- * 
+ *
  * Set the callbacks once in your setup() function.
  */
 
@@ -57,51 +61,51 @@ void setConnectorEnergizedSampler(std::function<bool()> connectorEnergized);
 
 void setConnectorPluggedSampler(std::function<bool()> connectorPlugged);
 
-//void setConnectorFaultedSampler(std::function<bool()> connectorFailed);
+// void setConnectorFaultedSampler(std::function<bool()> connectorFailed);
 
 void addConnectorErrorCodeSampler(std::function<const char *()> connectorErrorCode);
 
 /*
  * React on calls by the library's internal functions
- * 
+ *
  * The library needs to set parameters on your charger on a regular basis or perform
  * functions triggered by the central system. The library uses the following callbacks
  * (if they were set) to perform updates or functions on your charger.
- * 
+ *
  * Set the callbacks once in your setup() function.
  */
 
 void setOnChargingRateLimitChange(std::function<void(float)> chargingRateChanged);
 
-void setOnUnlockConnector(std::function<bool()> unlockConnector); //true: success, false: failure
+void setOnUnlockConnector(std::function<bool()> unlockConnector); // true: success, false: failure
 
 /*
  * React on CS-initiated operations
- * 
+ *
  * You can define custom behaviour in your integration which is executed every time the library
  * receives a CS-initiated operation. The following functions set a callback function for the
  * respective event. The library executes the callbacks always after its internal routines.
- * 
+ *
  * Set the callbacks once in your setup() function.
  */
 
-void setOnSetChargingProfileRequest(OnReceiveReqListener onReceiveReq); //optional
+void setOnSetChargingProfileRequest(OnReceiveReqListener onReceiveReq); // optional
 
-void setOnRemoteStartTransactionSendConf(OnSendConfListener onSendConf); //important, energize the power plug here and capture the idTag
+void setOnRemoteStartTransactionSendConf(OnSendConfListener onSendConf); // important, energize the power plug here and capture the idTag
 
-void setOnRemoteStopTransactionSendConf(OnSendConfListener onSendConf); //important, de-energize the power plug here
-void setOnRemoteStopTransactionReceiveReq(OnReceiveReqListener onReceiveReq); //optional, to de-energize the power plug immediately
+void setOnRemoteStopTransactionSendConf(OnSendConfListener onSendConf);       // important, de-energize the power plug here
+void setOnRemoteStopTransactionReceiveReq(OnReceiveReqListener onReceiveReq); // optional, to de-energize the power plug immediately
 
-void setOnResetSendConf(OnSendConfListener onSendConf); //important, reset your device here (i.e. call ESP.reset();)
-void setOnResetReceiveReq(OnReceiveReqListener onReceiveReq); //alternative: start reset timer here
+void setOnResetSendConf(OnSendConfListener onSendConf);       // important, reset your device here (i.e. call ESP.reset();)
+void setOnResetReceiveReq(OnReceiveReqListener onReceiveReq); // alternative: start reset timer here
 
 /*
  * Perform CP-initiated operations
- * 
+ *
  * Use following functions to send OCPP messages. Each function will adapt the library's
  * internal state appropriatley (e.g. after a successful StartTransaction request the library
  * will store the transactionId and send a StatusNotification).
- * 
+ *
  * On receipt of the .conf() response the library calls the callback function
  * "OnReceiveConfListener onConf" and passes the OCPP payload to it. The following functions
  * are non-blocking. Your application code will immediately resume with the subsequent code
@@ -112,7 +116,7 @@ void authorize(const char *idTag, OnReceiveConfListener onConf = nullptr, OnAbor
 
 void bootNotification(const char *chargePointModel, const char *chargePointVendor, OnReceiveConfListener onConf = nullptr, OnAbortListener onAbort = nullptr, OnTimeoutListener onTimeout = nullptr, OnReceiveErrorListener onError = nullptr, std::unique_ptr<Timeout> timeout = nullptr);
 
-//The OCPP operation will include the given payload without modifying it. The library will delete the payload object after successful transmission.
+// The OCPP operation will include the given payload without modifying it. The library will delete the payload object after successful transmission.
 void bootNotification(DynamicJsonDocument *payload, OnReceiveConfListener onConf = nullptr, OnAbortListener onAbort = nullptr, OnTimeoutListener onTimeout = nullptr, OnReceiveErrorListener onError = nullptr, std::unique_ptr<Timeout> timeout = nullptr);
 
 void startTransaction(const char *idTag, OnReceiveConfListener onConf = nullptr, OnAbortListener onAbort = nullptr, OnTimeoutListener onTimeout = nullptr, OnReceiveErrorListener onError = nullptr, std::unique_ptr<Timeout> timeout = nullptr);
@@ -123,18 +127,18 @@ void stopTransaction(OnReceiveConfListener onConf = nullptr, OnAbortListener onA
  * Access information about the internal state of the library
  */
 
-int getTransactionId(); //returns the ID of the current transaction. Returns -1 if called before or after an transaction
+int getTransactionId(); // returns the ID of the current transaction. Returns -1 if called before or after an transaction
 
 bool ocppPermitsCharge();
 
-bool isAvailable(); //if the charge point is operative or inoperative
+bool isAvailable(); // if the charge point is operative or inoperative
 
 /*
  * Session management
  *
  * A session begins when the EV user is authenticated against the OCPP system and intends to start the charging process.
  * The session ends as soon as the authentication expires or as soon as the EV user does not intend to charge anymore.
- * 
+ *
  * A session means that the EVSE does not need further input from the EV user or OCPP backend to start a transaction.
  */
 
@@ -156,7 +160,7 @@ const char *getSessionIdTag();
 // brings a simple configuration for the ESP32 and ESP8266 for prototyping purposes, however
 // for the productive system you will have to develop a configuration targeting the specific
 // OCPP backend.
-// See  ArduinoOcpp/Tasks/FirmwareManagement/FirmwareService.h 
+// See  ArduinoOcpp/Tasks/FirmwareManagement/FirmwareService.h
 ArduinoOcpp::FirmwareService *getFirmwareService();
 #endif
 

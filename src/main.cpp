@@ -14,9 +14,14 @@ ESP8266WiFiMulti WiFiMulti;
 #include "time.h"
 #include <Ticker.h>
 
+#include <MFRC522.h> //MFRC522 library
+#include <SPI.h>     //Include SPI library
+
 #include <HTTPClient.h>
 
 #include "ArduinoOcpp/Core/FileManage.h"
+#include <ArduinoOcpp.h> //Matt-x/ArduinoOcpp library
+
 #else
 #error only ESP32 or ESP8266 supported at the moment
 #endif
@@ -28,6 +33,12 @@ ESP8266WiFiMulti WiFiMulti;
 // #define STAPSK "He@ven$heth05"
 
 // 159
+
+#define SDA_SS_PIN 5                  // 21 //ESP Interface Pin
+#define RST_PIN 15                    // 22    //ESP Interface Pin
+MFRC522 mfrc522(SDA_SS_PIN, RST_PIN); // create instance of class
+MFRC522::MIFARE_Key key;
+
 #define OCPP_HOST "192.168.1.77"
 #define OCPP_PORT 8000
 #define OCPP_URL "ws://192.168.1.77:8000/ws/socket/"
@@ -80,6 +91,39 @@ void writeFile(fs::FS &fs, const char *path, const char *message);
 void appendFile(fs::FS &fs, const char *path, const char *message);
 void checkStatus();
 
+#define Amperage_Pin 4 // modulated as PWM
+
+// #define EV_Plug_Pin 36 // Input pin | Read if an EV is connected to the EVSE
+// #define EV_Plugged HIGH
+// #define EV_Unplugged LOW
+
+#define OCPP_Charge_Permission_Pin 10 // Output pin | Signal if OCPP allows / forbids energy flow
+#define OCPP_Charge_Permitted HIGH
+#define OCPP_Charge_Forbidden LOW
+
+#define EV_Charge_Pin 35 // Input pin | Read if EV requests energy (corresponds to SAE J1772 State C)
+#define EV_Charging LOW
+#define EC_Suspended HIGH
+
+#define OCPP_Availability_Pin 9 // Output pin | Signal if this EVSE is out of order (set by Central System)
+#define OCPP_Available HIGH
+#define OCPP_Unavailable LOW
+
+#define EVSE_Ground_Fault_Pin 34 // Input pin | Read ground fault detector
+#define EVSE_Grud_Faulted HIGH
+#define EVSE_Ground_Clear LOW
+
+// variables declaration
+bool transaction_in_process = false; // Check if transaction is in-progress
+int evPlugged = EV_Unplugged;        // Check if EV is plugged-in
+
+bool booted = false;
+ulong scheduleReboot = 0;   // 0 = no reboot scheduled; otherwise reboot scheduled in X ms
+ulong reboot_timestamp = 0; // timestamp of the triggering event; if scheduleReboot=0, the timestamp has no meaning
+extern String content = "";
+extern String content2 = "";
+extern signed tran_id = -1;
+
 #include <ArduinoOcpp.h>
 
 void setup()
@@ -92,6 +136,20 @@ void setup()
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(STASSID);
+
+  pinMode(EV_Plug_Pin, INPUT);
+  pinMode(EV_Charge_Pin, INPUT);
+  pinMode(EVSE_Ground_Fault_Pin, INPUT);
+  pinMode(OCPP_Charge_Permission_Pin, OUTPUT);
+  digitalWrite(OCPP_Charge_Permission_Pin, OCPP_Charge_Forbidden);
+  pinMode(OCPP_Availability_Pin, OUTPUT);
+  digitalWrite(OCPP_Availability_Pin, OCPP_Unavailable);
+
+  pinMode(Amperage_Pin, OUTPUT);
+  pinMode(Amperage_Pin, OUTPUT);
+  ledcSetup(0, 1000, 8); // channel=0, freq=1000Hz, range=(2^8)-1
+  ledcAttachPin(Amperage_Pin, 0);
+  ledcWrite(Amperage_Pin, 256); // 256 is constant +3.3V DC
 
   WiFi.begin(STASSID, STAPSK);
 
@@ -130,28 +188,65 @@ void setup()
   /*
    * Integrate OCPP functionality. You can leave out the following part if your EVSE doesn't need it.
    */
-  setPowerActiveImportSampler([]()
-                              {
-        //measure the input power of the EVSE here and return the value in Watts
-        return 0.f; });
-
-  setOnChargingRateLimitChange([](float limit)
+  setEnergyActiveImportSampler([]()
                                {
-        //set the SAE J1772 Control Pilot value here
-        Serial.print(F("[main] Smart Charging allows maximum charge rate: "));
-        Serial.println(limit); });
+    //read the energy input register of the EVSE here and return the value in Wh
+    /** Approximated value. TODO: Replace with real reading**/
+    static ulong lastSampled = millis();
+    static float energyMeter = 0.f;
+    if (getTransactionId() > 0 && digitalRead(EV_Charge_Pin) == EV_Charging)
+        energyMeter += ((float) millis() - lastSampled) * 0.003f; //increase by 0.003Wh per ms (~ 10.8kWh per h)
+    lastSampled = millis();
+    return energyMeter; });
 
   setEvRequestsEnergySampler([]()
                              {
-        //return true if the EV is in state "Ready for charging" (see https://en.wikipedia.org/wiki/SAE_J1772#Control_Pilot)
-        return false; });
+    //return true if the EV is in state "Ready for charging" (see https://en.wikipedia.org/wiki/SAE_J1772#Control_Pilot)
+    //return false;
+    return digitalRead(EV_Charge_Pin) == EV_Charging; });
 
-  //... see ArduinoOcpp.h for more settings
+  addConnectorErrorCodeSampler([]()
+                               {
+                                 // if (digitalRead(EVSE_GROUND_FAULT_PIN) != EVSE_GROUND_CLEAR) {
+                                 // return "GroundFault";
+                                 // } else {
+                                 return (const char *)NULL;
+                                 // }
+                               });
 
-  /*
-   * Notify the Central System that this station is ready
-   */
-  bootNotification("My Charging Station", "My company name");
+  setOnResetSendConf([](JsonObject payload)
+                     {
+        if (getTransactionId() >= 0)
+            stopTransaction();
+        
+        reboot_timestamp = millis();
+        scheduleReboot = 5000;
+        booted = false; });
+
+  // Check connector
+  setOnUnlockConnector([]()
+                       { return true; });
+
+  /*------------Notify the Central System that this station is ready--------------*/
+  /*-----------------------------BOOT NOTIFICATION---------------------------------*/
+
+  bootNotification("EV CHARGER", "GRIDEN POWER", [](JsonObject payload)
+                   {
+    const char *status = payload["status"] | "INVALID";
+    if (!strcmp(status, "Accepted")) {
+        booted = true;
+        Serial.println("Sever Connected!");
+        //digitalWrite(SERVER_CONNECT_LED, SERVER_CONNECT_ON);
+    } else {
+        //retry sending the BootNotification
+        delay(60000);
+        ESP.restart();
+    } });
+
+  /*---------------------Initializing MFRC522 RFID Library------------------------*/
+  SPI.begin();        // Initiate  SPI bus
+  mfrc522.PCD_Init(); // Initiate MFRC522
+                      // Serial.println("Please verify your RFID tag...");
 }
 
 void loop()
@@ -165,40 +260,150 @@ void loop()
   /*
    * Check internal OCPP state and bind EVSE hardware to it
    */
-  if (ocppPermitsCharge())
+  if (isInSession() == false /*true*/ && transaction_in_process == true /*true*/ && evPlugged == EV_Plugged && digitalRead(EV_Plug_Pin) == EV_Plugged)
   {
-    // OCPP set up and transaction running. Energize the EV plug here
+    Serial.println("Reset");
+    while (digitalRead(EV_Plug_Pin) == EV_Plugged)
+    {
+      Serial.print(".");
+      delay(5000);
+    }
+    if (isAvailable())
+    {
+
+      ESP.restart();
+    }
+
+    transaction_in_process = false;
+    evPlugged = EV_Unplugged;
+    tran_id = 0;
+  }
+
+  // If RIFD chip is detected process for verification
+  if (!mfrc522.PICC_IsNewCardPresent() && transaction_in_process == false)
+  {
+    return;
+  }
+  // Verify if the NUID has been readed
+  else if (!mfrc522.PICC_ReadCardSerial() && transaction_in_process == false)
+  {
+    Serial.println("Card not readed");
+    return;
+  }
+  else if (transaction_in_process == false) // && isInSession() == false)
+  {
+    // Show UID on serial monitor
+    String content = "";
+    MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
+    Serial.println(mfrc522.PICC_GetTypeName(piccType));
+    // Check is the PICC of Classic MIFARE type
+    if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI &&
+        piccType != MFRC522::PICC_TYPE_MIFARE_1K &&
+        piccType != MFRC522::PICC_TYPE_MIFARE_4K)
+    {
+      Serial.println(F("Your tag is not of type MIFARE Classic."));
+      return;
+    }
+
+    Serial.println("");
+    Serial.print(F("The ID tag no is  : "));
+
+    for (byte i = 0; i < mfrc522.uid.size; i++)
+    {
+      Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : "");
+      Serial.print(mfrc522.uid.uidByte[i], HEX);
+      content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : ""));
+      content.concat(String(mfrc522.uid.uidByte[i], HEX));
+    }
+
+    Serial.println("");
+    content2 = content;
+    content.toUpperCase();
+    char *idTag = new char[content.length() + 1];
+    strcpy(idTag, content.c_str());
+    delay(2000);
+    authorize(idTag, [](JsonObject response)
+              {
+            //check if user with idTag is authorized
+            if (!strcmp("Accepted", response["idTagInfo"]["status"] | "Invalid")){
+            Serial.println(F("[main] User is authorized to start charging"));
+            transaction_in_process = true;
+
+            } else {
+            Serial.printf("[main] Authorize denied. Reason: %s\n", response["idTagInfo"]["status"] | "");
+            } });
+    Serial.printf("[main] Authorizing user with idTag %s\n", idTag);
+
+    delay(2000);
+
+    if (ocppPermitsCharge())
+    {
+      Serial.println("OCPP Charge Permission Forbidden");
+    }
+    else
+    {
+      Serial.println("OCPP Charge Permission Permitted");
+    }
+
+    if (isInSession() == true)
+    {
+      transaction_in_process = true;
+    }
   }
   else
   {
-    // No transaction running at the moment. De-energize EV plug
-  }
+    delay(2000);
+    if (!booted)
+      return;
+    if (scheduleReboot > 0 && millis() - reboot_timestamp >= scheduleReboot)
+    {
+      ESP.restart();
+    }
 
-  /*
-   * Detect if something physical happened at your EVSE and trigger the corresponding OCPP messages
-   */
-  if (/* RFID chip detected? */ false)
-  {
-    const char *idTag = "my-id-tag"; // e.g. idTag = RFID.readIdTag();
-    authorize(idTag);
-  }
+    if (digitalRead(EV_Plug_Pin) == EV_Plugged && evPlugged == EV_Unplugged && getTransactionId() >= 0)
+    {
+      // transition unplugged -> plugged; Case A: transaction has already been initiated
+      evPlugged = EV_Plugged;
+      Serial.println("In Case A");
+    }
+    else if (digitalRead(EV_Plug_Pin) == EV_Plugged && evPlugged == EV_Unplugged && isAvailable())
+    {
+      // transition unplugged -> plugged; Case B: no transaction running; start transaction
+      // Serial.println("Case B: no transaction running; start transaction");
 
-  if (/* EV plugged in? */ false)
-  {
-    startTransaction("my-id-tag", [](JsonObject payload)
-                     {
+      evPlugged = EV_Plugged;
+      content2.toUpperCase();
+      char *idTag = new char[content2.length() + 1];
+      strcpy(idTag, content2.c_str());
+      startTransaction(idTag, [](JsonObject response)
+                       {
             //Callback: Central System has answered. Could flash a confirmation light here.
-            Serial.print(F("[main] Started OCPP transaction\n")); });
-  }
 
-  if (/* EV unplugged? */ false)
-  {
-    stopTransaction([](JsonObject payload)
-                    {
-            //Callback: Central System has answered.
-            Serial.print(F("[main] Stopped OCPP transaction\n")); });
-  }
+            Serial.printf("[main] Started OCPP transaction. Status: %s, transactionId: %u\n",
+                response["idTagInfo"]["status"] | "Invalid",
+                response["transactionId"] | -1);
+        
+            tran_id = (response["transactionId"] | -1); });
 
+      delay(2000);
+    }
+    else if (digitalRead(EV_Plug_Pin) == EV_Unplugged && evPlugged == EV_Plugged)
+    { //  && isInSession() == true) {
+      // transition plugged -> unplugged
+      evPlugged = EV_Unplugged;
+
+      if (tran_id >= 0)
+      {
+        stopTransaction([](JsonObject response)
+                        {
+                    //Callback: Central System has answered.
+                    Serial.print(F("[main] Stopped OCPP transaction\n")); });
+
+        transaction_in_process = false;
+        tran_id = -1;
+      }
+    }
+  }
   //... see ArduinoOcpp.h for more possibilities
 }
 
